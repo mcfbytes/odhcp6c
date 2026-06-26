@@ -3,6 +3,8 @@ name: odhcp6c
 on:
   pull_request:
   push:
+    branches:
+      - master
 
 env:
   archs: "aarch64 arm mips mips64 powerpc powerpc64 riscv64 x86_64"
@@ -110,15 +112,15 @@ jobs:
               [ -f "$f" ] && sudo sed -i 's/^deb \(\[[^]]*\] \)\?/deb [arch=amd64] /' "$f"
             done
             . /etc/os-release
-            printf 'Types: deb\nURIs: http://ports.ubuntu.com/ubuntu-ports/\nSuites: %s %s-updates %s-security\nComponents: main universe\nArchitectures: %s\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n' \
+            printf 'Types: deb\nURIs: https://ports.ubuntu.com/ubuntu-ports/\nSuites: %s %s-updates %s-security\nComponents: main universe\nArchitectures: %s\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n' \
               "$VERSION_CODENAME" "$VERSION_CODENAME" "$VERSION_CODENAME" "${{ matrix.debarch }}" \
               | sudo tee /etc/apt/sources.list.d/ports.sources >/dev/null
             sudo dpkg --add-architecture ${{ matrix.debarch }}
           fi
           sudo apt update
-          sudo apt install ${{ matrix.packages }}
+          sudo apt install -y ${{ matrix.packages }}
           if [ "${{ matrix.privsep }}" = "true" ]; then
-            sudo apt install libcap-ng-dev:${{ matrix.debarch }} libseccomp-dev:${{ matrix.debarch }}
+            sudo apt install -y libcap-ng-dev:${{ matrix.debarch }} libseccomp-dev:${{ matrix.debarch }}
           fi
 
       - name: Prepare build
