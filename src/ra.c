@@ -48,11 +48,6 @@
 #define IFF_LOWER_UP 0x10000
 #endif
 
-/* Size of the auxtarget buffer appended after *entry; used for both the
- * alloca() and the dn_expand() cap in the ND_OPT_DNSSL handler so the two
- * values cannot drift apart. */
-#define RA_DNSSL_MAXNAME 256
-
 static bool nocarrier = false;
 static bool ptp_link = false;
 
@@ -539,7 +534,7 @@ bool ra_process(void)
 		uint8_t buf[CMSG_SPACE(sizeof(int))];
 	} cmsg_buf;
 	struct nd_router_advert *adv = (struct nd_router_advert*)buf;
-	struct odhcp6c_entry *entry = alloca(sizeof(*entry) + RA_DNSSL_MAXNAME);
+	struct odhcp6c_entry *entry = alloca(sizeof(*entry) + 256);
 	const struct in6_addr any = IN6ADDR_ANY_INIT;
 
 	memset(entry, 0, sizeof(*entry));
@@ -624,15 +619,8 @@ bool ra_process(void)
 		icmpv6_for_each_option(opt, &adv[1], &buf[len]) {
 			switch(opt->type) {
 			case ND_OPT_MTU:
-				if (opt->len != 1)
-					continue;
-
-				if ((uint8_t*)&opt->data[2] + sizeof(uint32_t) > &buf[len])
-					continue;
-
-				uint32_t mtu;
-				memcpy(&mtu, &opt->data[2], sizeof(mtu));
-				changed |= ra_set_mtu(ntohl(mtu));
+				uint32_t *mtu = (uint32_t*)&opt->data[2];
+				changed |= ra_set_mtu(ntohl(*mtu));
 				break;
 
 			case ND_OPT_ROUTE_INFORMATION:
@@ -641,38 +629,22 @@ bool ra_process(void)
 
 				struct icmpv6_opt_route_info *ri = (struct icmpv6_opt_route_info *)opt;
 
-				if (ri->len == 0)
-					continue;
-
-				/*
-				 * RFC 4191 §2.1/2.3: the Length field depends on the
-				 * Prefix Length. A prefix of 65-128 bits requires Length 3
-				 * (16 prefix octets), a prefix of 1-64 bits requires
-				 * Length 2 or 3 (>= 8 prefix octets). Reject options whose
-				 * Prefix Length is not covered by the prefix octets present.
-				 */
 				if (ri->prefix_len > 128) {
 					continue;
 				} else if (ri->prefix_len > 64) {
-					if (ri->len < 3)
-						continue;
-				} else if (ri->prefix_len > 0) {
 					if (ri->len < 2)
 						continue;
+				} else if (ri->prefix_len > 0) {
+					if (ri->len < 1)
+						continue;
 				}
-
-				size_t copy_len = (size_t)(ri->len - 1) * 8;
-				if ((uint8_t *)ri->prefix + copy_len > &buf[len])
-					continue;
 
 				entry->router = from.sin6_addr;
 				entry->target = any;
 				entry->priority = pref_to_priority(ri->flags);
 				entry->length = ri->prefix_len;
 				entry->valid = ntohl(ri->lifetime);
-				if (copy_len > sizeof(entry->target))
-					copy_len = sizeof(entry->target);
-				memcpy(&entry->target, ri->prefix, copy_len);
+				memcpy(&entry->target, ri->prefix, (ri->len - 1) * 8);
 
 				if (IN6_IS_ADDR_LINKLOCAL(&entry->target)
 						|| IN6_IS_ADDR_LOOPBACK(&entry->target)
@@ -739,12 +711,9 @@ bool ra_process(void)
 				entry->valid = ntohl(*rdns_valid);
 				entry->preferred = 0;
 
-				uint8_t *rdns_rec = (uint8_t*)opt + 8;
 				for (ssize_t i = 0; i < (opt->len - 1) / 2; ++i) {
-					uint8_t *rec = rdns_rec + i * sizeof(entry->target);
-					if (rec + sizeof(entry->target) > &buf[len])
-						break;
-					memcpy(&entry->target, rec, sizeof(entry->target));
+					memcpy(&entry->target, &opt->data[6 + i * sizeof(entry->target)],
+							sizeof(entry->target));
 					changed |= odhcp6c_update_entry(STATE_RA_DNS, entry,
 									ra_holdoff_interval);
 				}
@@ -763,7 +732,7 @@ bool ra_process(void)
 				entry->valid = ntohl(*ds_valid);
 
 				while (ds_buf < end) {
-					int ds_len = dn_expand(ds_buf, end, ds_buf, (char*)entry->auxtarget, RA_DNSSL_MAXNAME);
+					int ds_len = dn_expand(ds_buf, end, ds_buf, (char*)entry->auxtarget, 256);
 					if (ds_len < 1)
 						break;
 
@@ -787,9 +756,6 @@ bool ra_process(void)
 				struct icmpv6_opt_captive_portal *capt_port = (struct icmpv6_opt_captive_portal*)opt;
 				uint8_t *cp_buf = &capt_port->data[0];
 				size_t uri_len = (capt_port->len * 8) - 2;
-				if (cp_buf + uri_len > &buf[len])
-					continue;
-
 				size_t ref_len = sizeof(URN_IETF_CAPT_PORT_UNRESTR) - 1;
 
 				/* RFC8910 §2:
