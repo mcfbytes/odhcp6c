@@ -6,7 +6,6 @@ on:
 
 env:
   archs: "aarch64 arm mips mips64 powerpc powerpc64 riscv64 x86_64"
-  variants: "without_ubus with_ubus"
 
 jobs:
   build:
@@ -41,22 +40,14 @@ jobs:
             gcc: /usr/bin/x86_64-linux-gnu-gcc
             packages: gcc-x86-64-linux-gnu
     outputs:
-      size-aarch64-without-ubus: ${{ steps.without_ubus.outputs.size_aarch64 }}
-      size-aarch64-with-ubus: ${{ steps.with_ubus.outputs.size_aarch64 }}
-      size-arm-without-ubus: ${{ steps.without_ubus.outputs.size_arm }}
-      size-arm-with-ubus: ${{ steps.with_ubus.outputs.size_arm }}
-      size-mips-without-ubus: ${{ steps.without_ubus.outputs.size_mips }}
-      size-mips-with-ubus: ${{ steps.with_ubus.outputs.size_mips }}
-      size-mips64-without-ubus: ${{ steps.without_ubus.outputs.size_mips64 }}
-      size-mips64-with-ubus: ${{ steps.with_ubus.outputs.size_mips64 }}
-      size-powerpc-without-ubus: ${{ steps.without_ubus.outputs.size_powerpc }}
-      size-powerpc-with-ubus: ${{ steps.with_ubus.outputs.size_powerpc }}
-      size-powerpc64-without-ubus: ${{ steps.without_ubus.outputs.size_powerpc64 }}
-      size-powerpc64-with-ubus: ${{ steps.with_ubus.outputs.size_powerpc64 }}
-      size-riscv64-without-ubus: ${{ steps.without_ubus.outputs.size_riscv64 }}
-      size-riscv64-with-ubus: ${{ steps.with_ubus.outputs.size_riscv64 }}
-      size-x86_64-without-ubus: ${{ steps.without_ubus.outputs.size_x86_64 }}
-      size-x86_64-with-ubus: ${{ steps.with_ubus.outputs.size_x86_64 }}
+      size-aarch64: ${{ steps.with_ubus.outputs.size_aarch64 }}
+      size-arm: ${{ steps.with_ubus.outputs.size_arm }}
+      size-mips: ${{ steps.with_ubus.outputs.size_mips }}
+      size-mips64: ${{ steps.with_ubus.outputs.size_mips64 }}
+      size-powerpc: ${{ steps.with_ubus.outputs.size_powerpc }}
+      size-powerpc64: ${{ steps.with_ubus.outputs.size_powerpc64 }}
+      size-riscv64: ${{ steps.with_ubus.outputs.size_riscv64 }}
+      size-x86_64: ${{ steps.with_ubus.outputs.size_x86_64 }}
     steps:
       - name: Checkout odhcp6c
         uses: actions/checkout@v5
@@ -128,18 +119,6 @@ jobs:
           make
           make install
 
-      - id: without_ubus
-        name: Build odhcp6c (w/o ubus)
-        env:
-          BUILD_DIR: build/odhcp6c-without-ubus
-        run: |
-          cmake \
-            -DCMAKE_C_COMPILER=${{ matrix.gcc }} \
-            -DCMAKE_PREFIX_PATH=${GITHUB_WORKSPACE}/build \
-            -B $BUILD_DIR -S .
-          make -C $BUILD_DIR
-          echo "size_${{ matrix.arch }}=$( find $BUILD_DIR -type f -name odhcp6c -printf '%s' )" >> $GITHUB_OUTPUT
-
       - id: with_ubus
         name: Build odhcp6c (with ubus)
         env:
@@ -168,39 +147,21 @@ jobs:
     steps:
       - name: Sizes summary
         env:
-          size_aarch64_without_ubus: ${{needs.build.outputs.size-aarch64-without-ubus}}
-          size_aarch64_with_ubus: ${{needs.build.outputs.size-aarch64-with-ubus}}
-          size_arm_without_ubus: ${{needs.build.outputs.size-arm-without-ubus}}
-          size_arm_with_ubus: ${{needs.build.outputs.size-arm-with-ubus}}
-          size_mips_without_ubus: ${{needs.build.outputs.size-mips-without-ubus}}
-          size_mips_with_ubus: ${{needs.build.outputs.size-mips-with-ubus}}
-          size_mips64_without_ubus: ${{needs.build.outputs.size-mips64-without-ubus}}
-          size_mips64_with_ubus: ${{needs.build.outputs.size-mips64-with-ubus}}
-          size_powerpc_without_ubus: ${{needs.build.outputs.size-powerpc-without-ubus}}
-          size_powerpc_with_ubus: ${{needs.build.outputs.size-powerpc-with-ubus}}
-          size_powerpc64_without_ubus: ${{needs.build.outputs.size-powerpc64-without-ubus}}
-          size_powerpc64_with_ubus: ${{needs.build.outputs.size-powerpc64-with-ubus}}
-          size_riscv64_without_ubus: ${{needs.build.outputs.size-riscv64-without-ubus}}
-          size_riscv64_with_ubus: ${{needs.build.outputs.size-riscv64-with-ubus}}
-          size_x86_64_without_ubus: ${{needs.build.outputs.size-x86_64-without-ubus}}
-          size_x86_64_with_ubus: ${{needs.build.outputs.size-x86_64-with-ubus}}
+          size_aarch64: ${{needs.build.outputs.size-aarch64}}
+          size_arm: ${{needs.build.outputs.size-arm}}
+          size_mips: ${{needs.build.outputs.size-mips}}
+          size_mips64: ${{needs.build.outputs.size-mips64}}
+          size_powerpc: ${{needs.build.outputs.size-powerpc}}
+          size_powerpc64: ${{needs.build.outputs.size-powerpc64}}
+          size_riscv64: ${{needs.build.outputs.size-riscv64}}
+          size_x86_64: ${{needs.build.outputs.size-x86_64}}
         run: |
           echo "### ${GITHUB_WORKFLOW} sizes :floppy_disk:" >> $GITHUB_STEP_SUMMARY
 
-          header="| arch |"
-          table="| :---: |"
-          for variant in ${{ env.variants }}; do
-            header="$header $variant |"
-            table="$table :---: |"
-          done
-          echo $header >> $GITHUB_STEP_SUMMARY
-          echo $table >> $GITHUB_STEP_SUMMARY
+          echo "| arch | with_ubus |" >> $GITHUB_STEP_SUMMARY
+          echo "| :---: | :---: |" >> $GITHUB_STEP_SUMMARY
 
           for arch in ${{ env.archs }}; do
-            row="| $arch | "
-            for variant in $variants; do
-              value=size_${arch}_$(echo "$variant" | tr "[:upper:]" "[:lower:]")
-              row="$row ${!value} |"
-            done
-            echo $row >> $GITHUB_STEP_SUMMARY
+            value=size_${arch}
+            echo "| $arch | ${!value} |" >> $GITHUB_STEP_SUMMARY
           done
