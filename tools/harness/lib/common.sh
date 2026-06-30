@@ -116,7 +116,11 @@ wait_for_log() {
 }
 
 _wait_for_log_count() {
-	_c=$(grep -Ec "$1" "$HARNESS_WORKDIR/odhcp6c.log" 2>/dev/null || echo 0)
+	# grep -c already prints "0" (and exits 1) when there are no matches, so a
+	# "|| echo 0" fallback would append a second line and yield "0\n0", which
+	# breaks the numeric test below ("0: bad number"). Take grep's count as-is and
+	# default to 0 only when the file is absent (grep prints nothing).
+	_c=$(grep -Ec "$1" "$HARNESS_WORKDIR/odhcp6c.log" 2>/dev/null)
 	[ "${_c:-0}" -ge "$2" ]
 }
 
