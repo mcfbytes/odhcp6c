@@ -1,0 +1,97 @@
+# tools/harness/Dockerfile.debian
+#
+# glibc variant of the harness image (Debian). Functionally identical to the
+# Alpine/musl default in tools/harness/Dockerfile -- only the base image and
+# package manager differ. Use this cell to catch glibc-vs-musl behavioural
+# differences (notably in getaddrinfo, resolver, and syscall wrappers).
+#
+# Build (from the repository root):
+#   docker build -f tools/harness/Dockerfile.debian -t odhcp6c-harness:glibc .
+#
+# Run identically to the Alpine image (see tools/harness/Dockerfile header).
+
+FROM debian:trixie-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+# Debian does not package libubox or odhcpd. libubox is required (odhcp6c links
+# against it for libubox/md5.h and the list helpers) and is built from source
+# below. odhcpd is only the optional real-server backend -- scapy is the default
+# backend used by every harness scenario -- so it is omitted from the glibc
+# image.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential cmake pkg-config git \
+        libjson-c-dev \
+        iproute2 \
+        python3 python3-pip \
+        strace \
+        libseccomp-dev seccomp \
+        libcap-ng-dev \
+        ca-certificates tcpdump \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install the Python backend dependencies from the pinned requirements file so
+# the scapy version matches the other harness images (Debian's apt package would
+# otherwise float with the distro). Copied first for independent layer caching.
+COPY tools/harness/servers/requirements.txt /tmp/harness-requirements.txt
+RUN pip3 install --no-cache-dir --break-system-packages -r /tmp/harness-requirements.txt
+
+# Build libubox from the upstream mirror (no Debian package exists). Lua and the
+# examples are disabled to keep the build minimal; odhcp6c only needs the md5 and
+# list helpers from the shared library.
+RUN git clone --depth=1 https://github.com/openwrt/libubox.git /tmp/libubox \
+    && cmake -S /tmp/libubox -B /tmp/libubox/build \
+         -DBUILD_LUA=OFF -DBUILD_EXAMPLES=OFF -DBUILD_STATIC=OFF \
+    && cmake --build /tmp/libubox/build --parallel \
+    && cmake --install /tmp/libubox/build \
+    && ldconfig \
+    && rm -rf /tmp/libubox
+
+WORKDIR /src
+COPY . /src
+
+# ubus stack (built by default; override with --build-arg UBUS=OFF). libubox is
+# already built above (odhcp6c links it even without ubus); ubus is the main
+# OpenWrt configuration, so by default also build ubus from the upstream mirror
+# and install ubusd + the ubus CLI so the ubus-reconnect scenario can drive them
+# as part of the standard matrix. json-c (libjson-c-dev, installed above) is ubus'
+# JSON dependency. With UBUS=OFF the image builds the non-ubus odhcp6c instead and
+# the ubus-reconnect scenario self-skips.
+ARG UBUS=ON
+RUN if [ "$UBUS" = "ON" ]; then set -eux; \
+        git clone --depth=1 https://github.com/openwrt/ubus.git /tmp/ubus; \
+        cmake -S /tmp/ubus -B /tmp/ubus/build \
+            -DBUILD_LUA=OFF -DBUILD_EXAMPLES=OFF \
+            -DCMAKE_PREFIX_PATH=/usr/local; \
+        cmake --build /tmp/ubus/build --parallel; \
+        cmake --install /tmp/ubus/build; \
+        ldconfig; \
+        rm -rf /tmp/ubus; \
+    fi
+
+ARG SECCOMP=OFF
+RUN cmake -S . -B build -DHARDENING=ON -DCMAKE_PREFIX_PATH=/usr/local \
+        $([ "$UBUS" = "ON" ] && echo -DUBUS=ON || echo -DUBUS=OFF) \
+        $(grep -q 'option(LIBCAP_NG' CMakeLists.txt && echo -DLIBCAP_NG=ON) \
+        $([ "$SECCOMP" = "ON" ] && grep -q 'option(SECCOMP' CMakeLists.txt && echo -DSECCOMP=ON) \
+    && cmake --build build --parallel \
+    && cp build/odhcp6c /usr/local/bin/odhcp6c
+
+# [privsep-debug] Prove whether privilege separation was actually compiled
+# into the binary-under-test, so a single-process CI result can be pinned to
+# the build (this layer) vs. the runtime. Remove once the privsep axis is green.
+RUN echo "[privsep-debug] LIBCAP_NG flag => [$(grep -q 'option(LIBCAP_NG' CMakeLists.txt && echo -DLIBCAP_NG=ON)]"; \
+    grep -i 'LIBCAP_NG' build/CMakeCache.txt || echo "[privsep-debug] (LIBCAP_NG not in CMakeCache)"; \
+    if readelf -d /usr/local/bin/odhcp6c 2>/dev/null | grep -qi 'cap-ng'; then \
+        echo "[privsep-debug] linked libcap-ng = YES"; \
+    else echo "[privsep-debug] linked libcap-ng = NO"; fi; \
+    if strings /usr/local/bin/odhcp6c 2>/dev/null | grep -q 'staying single-process'; then \
+        echo "[privsep-debug] WITH_LIBCAP_NG compiled = YES"; \
+    else echo "[privsep-debug] WITH_LIBCAP_NG compiled = NO"; fi; \
+    if readelf -d /usr/local/bin/odhcp6c 2>/dev/null | grep -qi 'libseccomp'; then \
+        echo "[privsep-debug] linked libseccomp (SECCOMP build) = YES"; \
+    else echo "[privsep-debug] linked libseccomp (SECCOMP build) = NO"; fi
+
+ENV ODHCP6C_BIN=/usr/local/bin/odhcp6c
+ENV PYTHON=python3
+
+CMD ["sh", "-c", "tools/harness/run-scenario.sh --list"]
