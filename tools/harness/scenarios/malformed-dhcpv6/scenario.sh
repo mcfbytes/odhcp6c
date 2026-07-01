@@ -21,8 +21,14 @@ scenario_odhcp6c() { echo "$HARNESS_VETH_CLIENT"; }
 scenario_drive() {
 	# Prove liveness before asserting the negative path: if odhcp6c crashes early,
 	# the "empty" assertions below can otherwise pass with zero captured records.
-	wait_for_log 'starting transaction|SOLICIT|RArecv|odhcp6c' 10 1 \
-		|| fatal "odhcp6c produced no activity log (may have crashed early)"
+	# Use the status-record surface (the 'started' action), NOT the odhcp6c log:
+	# odhcp6c always runs the status script on startup, but it does not print
+	# SOLICIT/transaction lines to its log at the default verbosity, so grepping
+	# the log here wrongly concludes it crashed.
+	wait_for_action started 10 \
+		|| fatal "odhcp6c emitted no status records (may have crashed early)"
+	# Let it receive and defensively parse the malformed ADVERTISE/REPLY, then
+	# confirm it is still alive: the TLV walker must not crash on the bad option.
 	sleep 3
 	harness_odhcp6c_running || fatal "odhcp6c exited unexpectedly during malformed DHCPv6 test"
 }
